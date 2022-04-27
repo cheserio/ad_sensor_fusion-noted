@@ -95,6 +95,7 @@ std::vector<std::pair<std::string, std::string> > CameraCameraSync::imageTimeSta
                 double ssim = evaluateImageTimeStampSync(orgImage, dstImage);
                 if (ssim > maxSSIM)
                 {
+                    // 以ori为基础遍历所有的满足时间戳下的所有dst文件找到结构相似度最大的
                     maxSSIM = ssim;
                     anchorFilenames = candidateFileNames;
                 }
@@ -118,7 +119,8 @@ double CameraCameraSync::evaluateImageTimeStampSync(cv::Mat orgImage, cv::Mat ds
     
     int width2 = dstImage.cols;
     int height2 = dstImage.rows;
-
+    // 可以看笔记中对结构相似度度量的描述
+    // 分别对应了均值 方差与协方差
     double mean_x = 0;
     double mean_y = 0;
     double sigma_x = 0;
@@ -128,13 +130,17 @@ double CameraCameraSync::evaluateImageTimeStampSync(cv::Mat orgImage, cv::Mat ds
     {
         for (int u = 0; u < width; u++)
         {
-            mean_x += orgImage.at<uchar>(v, u);
+            // 分别累加左右相机的像素值
+            mean_x += orgImage.at<uchar>(v, u); 
             mean_y += dstImage.at<uchar>(v, u);
 
         }
     }
+    // 求得平均值
     mean_x = mean_x / width / height;
     mean_y = mean_y / width / height;
+
+    // 求方差与协方差
     for (int v = 0; v < height; v++)
     {
         for (int u = 0; u < width; u++)
@@ -147,6 +153,7 @@ double CameraCameraSync::evaluateImageTimeStampSync(cv::Mat orgImage, cv::Mat ds
     sigma_x = sigma_x / (width*height - 1);
     sigma_y = sigma_y / (width*height - 1);
     sigma_xy = sigma_xy / (width*height - 1);
+    // 使用的是最后整个的结构相似度度量公式，没有具体计算亮度对比度和结构
     double molecule = (2 * mean_x*mean_y + C1) * (2 * sigma_xy + C2);
     double denominator = (mean_x*mean_x + mean_y * mean_y + C1) * (sigma_x + sigma_y + C2);
     double ssim = molecule / denominator;
@@ -220,7 +227,7 @@ void CameraCameraSync::spatialSynchronization(cv::Mat srcImage1, cv::Mat srcImag
 		obj.push_back(keypoints_object[goodMatches[i].queryIdx].pt);
 		scene.push_back(keypoints_scene[goodMatches[i].trainIdx].pt);
 	}
- 
+    // 去畸变
 	cv::Mat H = cv::findHomography(obj, scene, cv::RANSAC);//计算透视变换 
  
 	//从待测图片中获取角点
