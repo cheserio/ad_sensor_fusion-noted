@@ -42,6 +42,7 @@ std::cout << __LINE__ << " " << __FILE__ << " image publish "  << std::endl;
   }
 }
 
+// 卡尔曼滤波器设置
 void CameraImuTimeSync::setupCDKF() {
   CDKF::Config config;
 
@@ -63,27 +64,31 @@ void CameraImuTimeSync::setupCDKF() {
 
 }
 
-
+// 会获取一个imu的列表是时间戳对应旋转矩阵的一个列表
 void CameraImuTimeSync::imuCallback(const sensor_msgs::ImuConstPtr& msg) {
+  // 静态对象相当于全局化
   static sensor_msgs::Imu prev_msg;
   static bool first_msg = true;
-  
+  // 最开始的数据
   if (first_msg) {
     first_msg = false;
+    // 这里imu_rotations_是一个自定义的存储角度List 这里填入第一帧数据（初始化）
     imu_rotations_.emplace_back(msg->header.stamp, Eigen::Quaterniond(1.0, 0.0, 0.0, 0.0));
     prev_msg = *msg;
+    // __LINE__源代码当前行号 __FILE__源文件名
     std::cout << __LINE__ << " " << __FILE__ << " " << imu_rotations_.size() << std::endl;
     return;
   }
-
+  // imu时间戳混乱会报错
   if (prev_msg.header.stamp >= msg->header.stamp) {
     ROS_WARN(
         "Your imu messages are not monotonically increasing, expect garbage results.");
   }
 
   // integrate imu reading
+  // 两帧imu数据之间的时间差的一半 下面计算的时候基于两速度各算一半相当于是平均了
   double half_delta_t = (msg->header.stamp - prev_msg.header.stamp).toSec() / 2.0;
-
+  // 提取imu两帧之间的角度变化值
   Eigen::Quaterniond delta_angle =
       Eigen::AngleAxisd(half_delta_t * (msg->angular_velocity.x + prev_msg.angular_velocity.x),
                         Eigen::Vector3d::UnitX()) *
@@ -91,12 +96,13 @@ void CameraImuTimeSync::imuCallback(const sensor_msgs::ImuConstPtr& msg) {
                         Eigen::Vector3d::UnitY()) *
       Eigen::AngleAxisd(half_delta_t * (msg->angular_velocity.z + prev_msg.angular_velocity.z),
                         Eigen::Vector3d::UnitZ());
-
+  // 填入imu信息 两帧imu中间时刻对应的角度变化（上一次的变化乘以当前变化差值 得到当前的变化量）
   imu_rotations_.emplace_back(
       prev_msg.header.stamp + ros::Duration(half_delta_t),
       imu_rotations_.back().second * delta_angle);
+  // 这里second是ros::time里面的second  
   imu_rotations_.back().second.normalize();
-
+  // 数据太久就清除掉
   // clear old data
   while ((imu_rotations_.back().first - imu_rotations_.front().first).toSec() > max_imu_data_age_s_) {
     imu_rotations_.pop_front();
@@ -106,19 +112,24 @@ void CameraImuTimeSync::imuCallback(const sensor_msgs::ImuConstPtr& msg) {
 }
 
 void CameraImuTimeSync::imageCallback(const sensor_msgs::ImageConstPtr& msg) {
+
   ros::Time stamp;
+  // stamp_on_arrival_ 默认值是false从ros的参数服务器获得数据
   if (stamp_on_arrival_) {
     stamp = ros::Time::now();
   } else {
     stamp = msg->header.stamp;
   }
-
+  // opencv里的图像
   static std::list<cv_bridge::CvImage> images;
+  // 从rosmsg转换到cv类型的image
   cv_bridge::CvImagePtr image = cv_bridge::toCvCopy(msg, "mono8");
 
+  // 时间预对齐
   // fire the image back out with minimal lag
+  // delay_by_n_frames_默认相差帧数是5 从参数服务获取数据
   if (images.size() >= (delay_by_n_frames_ - 1)) {
-    std_msgs::Float64 delta_t, offset;
+    std_msgs::Float64 delta_t, offset; // 接收输出数据 计算时间差
     cdkf_->getSyncedTimestamp(stamp, &(image->header.stamp), &(delta_t.data), &(offset.data));
     image_pub_.publish(image->toImageMsg());
     delta_t_pub_.publish(delta_t);
@@ -128,7 +139,7 @@ void CameraImuTimeSync::imageCallback(const sensor_msgs::ImageConstPtr& msg) {
   }
 
   image->header.stamp = stamp;
-
+  // 判断IMU和camera是否在一个时间内
   // delay by a few messages to ensure IMU messages span needed range
   images.push_back(*image);
   std::cout << "delay by a few messages "<< images.size() << std::endl;
@@ -149,6 +160,7 @@ void CameraImuTimeSync::imageCallback(const sensor_msgs::ImageConstPtr& msg) {
   }
   std::cout << __LINE__ << " " << __FILE__ << " " << imu_rotations_.size() << std::endl;
 
+  // 卡尔曼滤波估计
   // actually run filter
   cdkf_->predictionUpdate(std::next(images.begin())->header.stamp);
   cdkf_->measurementUpdate(images.begin()->header.stamp, std::next(images.begin())->header.stamp, image_angle, imu_rotations_, calc_offset_);
