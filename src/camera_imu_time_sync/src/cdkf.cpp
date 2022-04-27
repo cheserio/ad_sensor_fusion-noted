@@ -1,5 +1,5 @@
 #include "camera_imu_time_sync/cdkf.h"
-
+// 这是卡尔曼滤波的文件
 CDKF::CDKF(const Config& config) {
   state_.resize(kStateSize, 1);
   accessS(state_, DELTA_T).array() = config.inital_delta_t;
